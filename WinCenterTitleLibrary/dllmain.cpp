@@ -3,6 +3,9 @@
 #include <funchook.h>
 
 #define ENTIRE_TITLEBAR 10000
+#define SET_COLOR
+#define TEXT_COLOR RGB(0, 0, 0)
+#undef SET_COLOR
 
 funchook_t* funchook = NULL;
 HMODULE hModule = NULL;
@@ -25,6 +28,14 @@ int DrawTextWHook(
 {
     int ret;
 
+    if (!(format & DT_CALCRECT))
+    {
+        // fixes title label sometimes overlapping right margin of window
+        lprc->right -= 2;
+#ifdef SET_COLOR
+        SetTextColor(hdc, TEXT_COLOR);
+#endif
+    }
     ret = DrawTextWFunc(
         hdc,
         lpchText,
