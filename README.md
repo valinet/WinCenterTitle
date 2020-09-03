@@ -20,6 +20,32 @@ WinCenterTitle is a simple tool that allows you to center align the text in Wind
 
 The application injects into DWM and hooks *DrawText* method that is used to compute the area, and draw the title bar text for the window. By doing so, we achieve the effect with least amount of overhead, as the method is called by DWM only when the window is an unskinned (no custom client side decoration aka no [DwmExtendFrameIntoClientArea](https://docs.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmextendframeintoclientarea)). After injecting, the application monitors DWM and reinjects should it crash or reload by user action.
 
+This means that all regular windows will have their title bar text centered. Custom skinned windows require more attention; in particular, heavy skinned ones are impossible to modify unless hacks specific to the application are employed - think Visual Studio, Visual Studio Code (fortunately, it is already centered), Office (already centered as well). However, a special class of windows are left left-aligned by this tool, but we can do more regarding them: ribbon windows - think File Explorer, Paint, WordPad etc. These respect a property (CONTENTALIGNMENT) specified in the theme style file (the default is aero.msstyles). To patch this, a rather complicated process is required:
+
+1. Stop WinCenterTitle if running, and then kill dwm in order to get a fresh new process.
+
+2. Make a copy of aero folder and aero.theme from C:\Windows\Resources\Themes in the same folder. I called mine test.theme and folder test.
+
+3. Rename aero.msstyles to test.msstyles from aero folder, and aero.msstyles.mui to test.msstyles.mui from aero\en-US folder. These two steps may require you to take ownership of the files.
+
+4. Download [msstyleEditor](https://github.com/nptr/msstyleEditor) and open the test.msstyles file in it. In the left, browse for *Window\CAPTION*. On the right, click + near *Common* and choose CONTENTAALIGNMENT from the list. Set it to Right (there is currently a bug in msstyleEditor and Centered is labeled Right and vice versa; so, when you see Right, it means Center). Repeat this for *Window\MAXCAPTION* on the left (credits: https://www.sevenforums.com/customization/186924-center-titlebar-text.html). Make sure to save the newly edited file at C:\Windows\Resources\Themes\test\test.msstyle.
+
+5. Edit C:\Windows\Resources\Themes\test.theme, and make sure Path in VisualStyles section reads *%ResourceDir%\Themes\test\test.msstyles*. Also, change DisplayName in Theme section to whatever you like, I changed mine to *@%SystemRoot%\System32\themeui.dll,-2014* which will name the theme *Windows Basic*.
+
+6. Apply the new theme from Personalization\Themes in Settings. Notice how the title bar text is centered in Explorer. There is one issue though: the title bars are now colored, instead of default white/black. This is because DWM contains a check for the name of the msstyles file. If it is called *aero.msstyles*, title bars will be painted white/black, depending on whether you are on light/dark theme in Settings. If the msstyles file has any other name (like in our case), the title bar will have whatever color the msstyles file specifies, or in the case of this renamed aero.msstyles, it will use your accent color no matter if you have 'Show accent color on the following surfaces: Title bars and window borders' in Personalization\Colors in Settings checked or not. To override this behavour, WinCenterTitle has a small code block that identifies the in memory flag of DWM that holds the status of whether the theme is called aero.msstyles and overrides its value to 1, meaning that the theme is called aero.msstyles, despite its actual name, and forcing DWM to render the title bars using the default behavior. Make sure you have this portion of code in the DLL when compiling WinCenterTitle:
+
+   ```c
+       // determine aero.msstyles code path flag location
+       if (titlebar_color == NULL)
+       {
+           HANDLE hudwm = GetModuleHandle(L"uDWM");
+           uintptr_t* g_pdmInstance = (uintptr_t*)((uintptr_t)hudwm + (uintptr_t)(0xE6D88));
+           titlebar_color = (BYTE*)((uintptr_t)(*g_pdmInstance) + (uintptr_t)0x19);
+       }
+       // 1 = white title bars, 0 = colored title bars
+       *titlebar_color = 1;
+   ```
+
 ## License
 
 Hooking is done using the excellent [funchook](https://github.com/kubo/funchook) library (GPL with linking exception), which in turn is powered by the [diStorm3](https://github.com/gdabah/distorm/) (3-clause BSD) disassembler. Thus, I am offering this under the GNU General Public License Version 2.0, which I believe is compatible.
