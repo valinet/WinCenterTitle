@@ -23,7 +23,7 @@ uint64_t hInjection = 0;
 DWORD hLibModule = 0;
 
 BOOL firstCrash = TRUE;
-BOOL firstCrash2 = TRUE;
+BOOL firstTime = TRUE;
 
 LONG ExitHandler(LPEXCEPTION_POINTERS p)
 {
@@ -355,10 +355,11 @@ int WINAPI wWinMain(
             0,
             reinterpret_cast<LPTHREAD_START_ROUTINE>
                 ((uint64_t)hMod + (uint64_t)hInjection),
-            NULL,
+            reinterpret_cast<LPVOID>(firstTime),
             0,
             NULL
         );
+        firstTime = FALSE;
         WaitForSingleObject(
             hThread,
             INFINITE
