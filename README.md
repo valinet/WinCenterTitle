@@ -32,19 +32,8 @@ This means that all regular windows will have their title bar text centered. Cus
 
 5. Edit C:\Windows\Resources\Themes\test.theme, and make sure Path in VisualStyles section reads *%ResourceDir%\Themes\test\test.msstyles*. Also, change DisplayName in Theme section to whatever you like, I changed mine to *@%SystemRoot%\System32\themeui.dll,-2014* which will name the theme *Windows Basic*.
 
-6. Apply the new theme from Personalization\Themes in Settings. Notice how the title bar text is centered in Explorer. There is one issue though: the title bars are now colored, instead of default white/black. This is because DWM contains a check for the name of the msstyles file. If it is called *aero.msstyles*, title bars will be painted white/black, depending on whether you are on light/dark theme in Settings. If the msstyles file has any other name (like in our case), the title bar will have whatever color the msstyles file specifies, or in the case of this renamed aero.msstyles, it will use your accent color no matter if you have 'Show accent color on the following surfaces: Title bars and window borders' in Personalization\Colors in Settings checked or not. To override this behavour, WinCenterTitle has a small code block that identifies the in memory flag of DWM that holds the status of whether the theme is called aero.msstyles and overrides its value to 1, meaning that the theme is called aero.msstyles, despite its actual name, and forcing DWM to render the title bars using the default behavior. Make sure you have this portion of code in the DLL when compiling WinCenterTitle:
+6. Apply the new theme from Personalization\Themes in Settings. Notice how the title bar text is centered in Explorer. There is one issue though: the title bars are now colored, instead of default white/black. This is because DWM contains a check for the name of the msstyles file. If it is called *aero.msstyles*, title bars will be painted white/black, depending on whether you are on light/dark theme in Settings. If the msstyles file has any other name (like in our case), the title bar will have whatever color the msstyles file specifies, or in the case of this renamed aero.msstyles, it will use your accent color no matter if you have 'Show accent color on the following surfaces: Title bars and window borders' in Personalization\Colors in Settings checked or not. To override this behavour, WinCenterTitle has a small code block that identifies the in memory flag of DWM that holds the status of whether the theme is called aero.msstyles and overrides its value to 1, meaning that the theme is called aero.msstyles, despite its actual name, and forcing DWM to render the title bars using the default behavior. So, to complete this guide, start WinCenterTitle now and observe how the title bars will have centered text for all windows, including ribbon applications (File Explorer, WordPad, Paint etc). After aprox. 10 seconds, the title bars will also revert to their default white/black apparance, if you had them this way previously.
 
-   ```c
-       // determine aero.msstyles code path flag location
-       if (titlebar_color == NULL)
-       {
-           HANDLE hudwm = GetModuleHandle(L"uDWM");
-           uintptr_t* g_pdmInstance = (uintptr_t*)((uintptr_t)hudwm + (uintptr_t)(0xE6D88));
-           titlebar_color = (BYTE*)((uintptr_t)(*g_pdmInstance) + (uintptr_t)0x19);
-       }
-       // 1 = white title bars, 0 = colored title bars
-       *titlebar_color = 1;
-   ```
 
 ## License
 
