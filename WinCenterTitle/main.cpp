@@ -23,7 +23,6 @@ uint64_t hInjection = 0;
 DWORD hLibModule = 0;
 
 BOOL firstCrash = TRUE;
-BOOL firstTime = TRUE;
 
 LONG ExitHandler(LPEXCEPTION_POINTERS p)
 {
@@ -126,8 +125,6 @@ int WINAPI wWinMain(
     if (freopen_s(&conout, "CONOUT$", "w", stdout));
     wprintf(L"Center Windows Titlebars\n========================\n");
 #endif
-
-    Sleep(10000);
 
     // Step 1: Format hook library path
     GetModuleFileName(
@@ -355,11 +352,10 @@ int WINAPI wWinMain(
             0,
             reinterpret_cast<LPTHREAD_START_ROUTINE>
                 ((uint64_t)hMod + (uint64_t)hInjection),
-            reinterpret_cast<LPVOID>(firstTime),
+            NULL,
             0,
             NULL
         );
-        firstTime = FALSE;
         WaitForSingleObject(
             hThread,
             INFINITE
@@ -495,6 +491,8 @@ int WINAPI wWinMain(
             ExitHandler(NULL);
             return 0;
         }
+        // not required; in fact, it will post a WM_QUIT 
+        // for the next window we spawn; really stupid idea
         //DestroyWindow(hWnd);
         UnregisterClass(CLASS_NAME, hInstance);
 

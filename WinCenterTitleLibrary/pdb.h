@@ -23,11 +23,13 @@
 #define ONE_MB                  (1024 * 1024)
 #define ADDRESS_OFFSET          0x400000
 #define ADDR_G_PDMINSTANCE      "g_pdmInstance"
+#define ADDR_CDESKTOPMANAGER_LOADTHEME "CDesktopManager::LoadTheme"
 #define SYMBOL_HOSTNAME         "msdl.microsoft.com"
 #define SYMBOL_WEB              "/download/symbols/"
 #define DLL_NAME                "uDWM.dll"
 #define USER_AGENT              "Microsoft-Symbol-Server/10.0.10036.206"
 #define FORM_HEADERS            "Content-Type: application/octet-stream;\r\n"
+#define BUFFER_SIZE             4096
 
 //------------------------------------------------------------------------------
 enum e_mode
@@ -285,6 +287,11 @@ INT get_symbols(const char* pdb_file, DWORD* addresses)
     {
         return -4;
     }
+    SymEnumSymbols(g_handle, base_addr, ADDR_CDESKTOPMANAGER_LOADTHEME, enum_proc, NULL);
+    if (g_sym_count != 2)
+    {
+        return -5;
+    }
     for (i = 0; i < g_sym_count; ++i)
     {
         sym_info_t* sym_info = ((sym_info_t*)g_symbol_pool.base) + i;
@@ -373,25 +380,36 @@ DWORD downloadFile(char* url, char* filename)
                     strlen(data) * sizeof(char)
                 ))
                 {
-                    FILE* f;
-                    fopen_s(&f, filename, "wb");
-                    char buffer[4096];
-                    DWORD dwRead;
-                    while (InternetReadFile(
-                        hRequest,
-                        buffer,
-                        4096,
-                        &dwRead
-                    ))
+                    FILE* f = NULL;
+                    if (fopen_s(&f, filename, "wb"))
                     {
-                        if (dwRead == 0)
-                        {
-                            break;
-                        }
-                        fwrite(buffer, sizeof(char), dwRead, f);
-                        dwRead = 0;
+                        dwRet = 6;
                     }
-                    fclose(f);
+                    else
+                    {
+                        char buffer[BUFFER_SIZE];
+                        DWORD dwRead;
+                        BOOL bRet = TRUE;
+                        while (bRet = InternetReadFile(
+                            hRequest,
+                            buffer,
+                            BUFFER_SIZE,
+                            &dwRead
+                        ))
+                        {
+                            if (dwRead == 0)
+                            {
+                                break;
+                            }
+                            fwrite(buffer, sizeof(char), dwRead, f);
+                            dwRead = 0;
+                        }
+                        if (bRet == FALSE)
+                        {
+                            dwRet = 5;
+                        }
+                        fclose(f);
+                    }
                 }
                 else
                 {
@@ -436,7 +454,7 @@ INT download_symbols(HMODULE hModule, char* szLibPath, UINT sizeLibPath)
     DWORD ptr;
     UINT nSectionCount;
     UINT i;
-    uint64_t offset;
+    uintptr_t offset;
     UINT cbDebug = 0;
     PIMAGE_DEBUG_DIRECTORY imageDebugDirectory;
     PdbInfo* pdb_info = NULL;
@@ -520,14 +538,14 @@ INT download_symbols(HMODULE hModule, char* szLibPath, UINT sizeLibPath)
         UINT nSectionCount = ntHeader->FileHeader.NumberOfSections;
         for (i = 0; i < nSectionCount - 1; ++i, ++sectionHeader);
     }
-    offset = (int64_t)baseImage + ptr + (int64_t)sectionHeader->PointerToRawData - (int64_t)sectionHeader->VirtualAddress;
+    offset = (uintptr_t)baseImage + ptr + (uintptr_t)sectionHeader->PointerToRawData - (uintptr_t)sectionHeader->VirtualAddress;
     while (cbDebug >= sizeof(IMAGE_DEBUG_DIRECTORY))
     {
         imageDebugDirectory = (PIMAGE_DEBUG_DIRECTORY)(offset);
         offset += sizeof(IMAGE_DEBUG_DIRECTORY);
         if (imageDebugDirectory->Type == IMAGE_DEBUG_TYPE_CODEVIEW)
         {
-            pdb_info = (PdbInfo*)((uint64_t)baseImage + imageDebugDirectory->PointerToRawData);
+            pdb_info = (PdbInfo*)((uintptr_t)baseImage + imageDebugDirectory->PointerToRawData);
             if (0 == memcmp(&pdb_info->Signature, "RSDS", 4))
             {
                 strcat_s(url, pdb_info->PdbFileName);
