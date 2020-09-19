@@ -9,7 +9,7 @@
 
 #define CLASS_NAME L"WinCenterTitle"
 
-#define DWM_CRASHED -2222
+#define DWM_CRASHED 2222
 #define WM_DWM_CRASHED WM_USER + 1
 
 #ifdef _DEBUG
@@ -21,6 +21,9 @@ HANDLE hProcess = NULL;
 HMODULE hMod = NULL;
 uint64_t hInjection = 0;
 DWORD hLibModule = 0;
+
+BOOL firstCrash = TRUE;
+BOOL firstCrash2 = TRUE;
 
 LONG ExitHandler(LPEXCEPTION_POINTERS p)
 {
@@ -123,6 +126,8 @@ int WINAPI wWinMain(
     if (freopen_s(&conout, "CONOUT$", "w", stdout));
     wprintf(L"Center Windows Titlebars\n========================\n");
 #endif
+
+    //Sleep(10000);
 
     // Step 1: Format hook library path
     GetModuleFileName(
@@ -368,7 +373,28 @@ int WINAPI wWinMain(
 #ifdef DEBUG
             wprintf(L"9. Error while hooking DWM (%d).\n", hLibModule);
 #endif
-            return -9;
+            TCHAR wszLibPath[_MAX_PATH + 5];
+            ZeroMemory(wszLibPath, (_MAX_PATH + 5) * sizeof(TCHAR));
+            GetModuleFileName(
+                GetModuleHandle(NULL),
+                wszLibPath,
+                _MAX_PATH
+            );
+            PathRemoveFileSpec(wszLibPath);
+            wcscat_s(
+                wszLibPath,
+                _MAX_PATH,
+                TEXT("\\symbols\\settings.ini")
+            );
+            DeleteFile(wszLibPath);
+            if (firstCrash)
+            {
+                firstCrash = FALSE;
+            }
+            else
+            {
+                return -9;
+            }
         }
 #ifdef DEBUG
         wprintf(L"9. Successfully hooked DWM.\n");
@@ -466,9 +492,9 @@ int WINAPI wWinMain(
             wprintf(L"Shutting down application...\n");
 #endif
             ExitHandler(NULL);
-            return DWM_CRASHED;
+            return 0;
         }
-        DestroyWindow(hWnd);
+        //DestroyWindow(hWnd);
         UnregisterClass(CLASS_NAME, hInstance);
 
 #ifdef DEBUG

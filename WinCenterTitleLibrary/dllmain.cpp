@@ -1,11 +1,14 @@
 #include <iostream>
 #include <Windows.h>
 #include <funchook.h>
+#include "ini.h"
+#include "pdb.h"
 
 #define ENTIRE_TITLEBAR 10000
 #define SET_COLOR
 #define TEXT_COLOR RGB(0, 0, 0)
 #undef SET_COLOR
+#define NUMBER_OF_REQUESTED_SYMBOLS 1
 
 funchook_t* funchook = NULL;
 HMODULE hModule = NULL;
@@ -76,8 +79,67 @@ __declspec(dllexport) DWORD WINAPI main(
         // determine aero.msstyles code path flag location
         if (titlebar_color == NULL)
         {
+            //AllocConsole();
+            //freopen_s(&conout, "CONOUT$", "w", stdout);
+
+            SIZE_T dwRet;
+            DWORD addresses[NUMBER_OF_REQUESTED_SYMBOLS];
+            ZeroMemory(addresses, NUMBER_OF_REQUESTED_SYMBOLS * sizeof(DWORD));
+            char szLibPath[_MAX_PATH + 5];
+            TCHAR wszLibPath[_MAX_PATH + 5];
+            ZeroMemory(szLibPath, (_MAX_PATH + 5) * sizeof(char));
+            ZeroMemory(wszLibPath, (_MAX_PATH + 5) * sizeof(TCHAR));
+            GetModuleFileNameA(
+                hModule,
+                szLibPath,
+                _MAX_PATH
+            );
+            PathRemoveFileSpecA(szLibPath);
+            strcat_s(
+                szLibPath,
+                "\\symbols\\settings.ini"
+            );
+            mbstowcs_s(
+                &dwRet,
+                wszLibPath,
+                _MAX_PATH + 5,
+                szLibPath,
+                _MAX_PATH + 5
+            );
+            CIni ini = CIni(wszLibPath);
+            addresses[0] = ini.GetUInt(
+                TEXT("Addresses"),
+                TEXT(ADDR_G_PDMINSTANCE),
+                0
+            );
+            if (addresses[0] == 0)
+            {
+                if (download_symbols(
+                    hModule,
+                    szLibPath,
+                    _MAX_PATH + 5
+                ))
+                {
+                    FreeLibraryAndExitThread(hModule, 100);
+                    return 100;
+                }
+                if (get_symbols(
+                    szLibPath,
+                    addresses
+                ))
+                {
+                    FreeLibraryAndExitThread(hModule, 101);
+                    return 101;
+                }
+                ini.WriteUInt(
+                    TEXT("Addresses"),
+                    TEXT(ADDR_G_PDMINSTANCE),
+                    addresses[0]
+                );
+            }
+
             HANDLE hudwm = GetModuleHandle(L"uDWM");
-            uintptr_t* g_pdmInstance = (uintptr_t*)((uintptr_t)hudwm + (uintptr_t)(0xE6D88));
+            uintptr_t* g_pdmInstance = (uintptr_t*)((uintptr_t)hudwm + (uintptr_t)(addresses[0]));
             titlebar_color = (BYTE*)((uintptr_t)(*g_pdmInstance) + (uintptr_t)0x19);
             old_titlebar_color = *titlebar_color;
         }
