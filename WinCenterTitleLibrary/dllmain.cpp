@@ -8,7 +8,7 @@
 #define SET_COLOR
 #define TEXT_COLOR RGB(0, 0, 0)
 #undef SET_COLOR
-#define NUMBER_OF_REQUESTED_SYMBOLS 1
+#define NUMBER_OF_REQUESTED_SYMBOLS 2
 
 funchook_t* funchook = NULL;
 HMODULE hModule = NULL;
@@ -52,6 +52,19 @@ int DrawTextWHook(
     return ret;
 }
 
+static int64_t(*CDesktopManagerLoadThemeFunc)(
+    void* _this
+    );
+
+int64_t CDesktopManagerLoadThemeHook(
+    void* _this
+)
+{
+    int64_t ret = CDesktopManagerLoadThemeFunc(_this);
+    *titlebar_color = 1;
+    return ret;
+}
+
 __declspec(dllexport) DWORD WINAPI main(
     _In_ LPVOID lpParameter
 )
@@ -70,16 +83,6 @@ __declspec(dllexport) DWORD WINAPI main(
             return rv;
         }
 
-        rv = funchook_install(funchook, 0);
-        if (rv != 0) 
-        {
-            return rv;
-        }
-
-        if (lpParameter)
-        {
-            //Sleep(10000);
-        }
         // determine aero.msstyles code path flag location
         if (titlebar_color == NULL)
         {
@@ -116,7 +119,12 @@ __declspec(dllexport) DWORD WINAPI main(
                 TEXT(ADDR_G_PDMINSTANCE),
                 0
             );
-            if (addresses[0] == 0)
+            addresses[1] = ini.GetUInt(
+                TEXT("Addresses"),
+                TEXT(ADDR_CDESKTOPMANAGER_LOADTHEME),
+                0
+            );
+            if (addresses[0] == 0 || addresses[1] == 0)
             {
                 if (download_symbols(
                     hModule,
@@ -140,15 +148,37 @@ __declspec(dllexport) DWORD WINAPI main(
                     TEXT(ADDR_G_PDMINSTANCE),
                     addresses[0]
                 );
+                ini.WriteUInt(
+                    TEXT("Addresses"),
+                    TEXT(ADDR_CDESKTOPMANAGER_LOADTHEME),
+                    addresses[1]
+                );
             }
 
             HANDLE hudwm = GetModuleHandle(L"uDWM");
             uintptr_t* g_pdmInstance = (uintptr_t*)((uintptr_t)hudwm + (uintptr_t)(addresses[0]));
             titlebar_color = (BYTE*)((uintptr_t)(*g_pdmInstance) + (uintptr_t)0x19);
             old_titlebar_color = *titlebar_color;
+            // 1 = white title bars, 0 = colored title bars
+            *titlebar_color = 1;
+
+            CDesktopManagerLoadThemeFunc = (int64_t(*)(void*))((uintptr_t)hudwm + (uintptr_t)addresses[1]);
+            rv = funchook_prepare(
+                funchook, 
+                (void**)&CDesktopManagerLoadThemeFunc, 
+                CDesktopManagerLoadThemeHook
+            );
+            if (rv != 0)
+            {
+                return rv;
+            }
         }
-        // 1 = white title bars, 0 = colored title bars
-        *titlebar_color = 1;
+
+        rv = funchook_install(funchook, 0);
+        if (rv != 0)
+        {
+            return rv;
+        }
     }
     else
     {
@@ -164,7 +194,10 @@ __declspec(dllexport) DWORD WINAPI main(
             return rv;
         }
 
-        *titlebar_color = old_titlebar_color;
+        if (titlebar_color != NULL)
+        {
+            *titlebar_color = old_titlebar_color;
+        }
 
         FreeLibraryAndExitThread(hModule, 0);
     }
