@@ -127,7 +127,7 @@ int WINAPI wWinMain(
     wprintf(L"Center Windows Titlebars\n========================\n");
 #endif
 
-    //Sleep(10000);
+    Sleep(10000);
 
     // Step 1: Format hook library path
     GetModuleFileName(
