@@ -76,6 +76,10 @@ __declspec(dllexport) DWORD WINAPI main(
             return rv;
         }
 
+        if (lpParameter)
+        {
+            Sleep(10000);
+        }
         // determine aero.msstyles code path flag location
         if (titlebar_color == NULL)
         {
