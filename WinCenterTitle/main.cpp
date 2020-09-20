@@ -7,34 +7,55 @@
 #include <assert.h>
 #include <conio.h>
 
-#define CLASS_NAME L"WinCenterTitle"
+#define LIBRARY_NAME                        "\\WinCenterTitleLibrary.dll"
+#define DWM_PROCESS_NAME                    "dwm.exe"
+#define DWM_RESTART_WAIT_DELAY              1000
+#define MODULE_ARRAY_INITIAL_SIZE           100
+#define CLASS_NAME                          L"WinCenterTitle"
+#define WM_DWM_CRASHED                      WM_USER + 1
+#define ERROR_LOAD_LIBRARY                  0x2
+#define ERROR_NO_MAIN_IN_INJECTION_LIB      0x21
+#define ERROR_GETMODULEHANDLE_KERNEL32      0x3
+#define ERROR_GETPROCADDRESS_LOADLIBRARYW   0x31
+#define ERROR_GETPROCADDRESS_FREELIBRARY    0x32
+#define ERROR_DWM_NOT_RUNNING               0x4
+#define ERROR_DWM_OPENPROCESS               0x41
+#define ERROR_DWM_VIRTUALALLOC              0x5
+#define ERROR_DWM_WRITEPROCESSMEMORY        0x51
+#define ERROR_FAILED_TO_INJECT              0x6
+#define ERROR_FAILED_TO_RUN_ENTRY_POINT     0x61
+#define ERROR_CANNOT_FIND_LIBRARY_IN_DWM    0x8
+#define ERROR_MODULE_ARRAY_ALLOC            0x81
+#define ERROR_DWM_MODULE_ENUM               0x82
+#define ERROR_MODULE_ARRAY_REALLOC          0x83
+#define ERROR_CANNOT_GET_ADDRESS_MODULE     0x84
+#define ERROR_RUNNING_HOOK_ENTRY_POINT      0x9
+#define ERROR_CANNOT_RUN_INJECTION_MAIN     0x91
+#define ERROR_DELETE_SETTINGS               0x92
+#define ERROR_CREATE_MESSAGE_WINDOW         0x10
+#define ERROR_REGISTER_DWM_WATCH            0x11
+#define ERROR_REGISTER_EXIT_HANDLER         0x12
+#define ERROR_MESSAGE_QUEUE                 0x13
+#define ERROR_DWM_CRASHED                   0x222
+#define ERROR_FAILED_TO_CALL_FREELIBRARY    0x400
+#define ERROR_FREELIBRARY_FAILED            0x401
 
-#define DWM_CRASHED 2222
-#define WM_DWM_CRASHED WM_USER + 1
-
-#ifdef _DEBUG
-#define DEBUG
-#endif
-
-HANDLE hThread = NULL;
 HANDLE hProcess = NULL;
 HMODULE hMod = NULL;
-uint64_t hInjection = 0;
-DWORD hLibModule = 0;
-
+uintptr_t hInjection = 0;
 BOOL firstCrash = TRUE;
 
 LONG ExitHandler(LPEXCEPTION_POINTERS p)
 {
-    HMODULE hKernel32 = NULL;
-    FARPROC hAdrFreeLibrary = NULL;
+    HANDLE hThread = NULL;
+    DWORD dwThreadExitCode = 0;
 
     hThread = CreateRemoteThread(
         hProcess,
         NULL,
         0,
         reinterpret_cast<LPTHREAD_START_ROUTINE>
-        ((uint64_t)hMod + (uint64_t)hInjection),
+        ((uintptr_t)hMod + (uintptr_t)hInjection),
         NULL,
         0,
         NULL
@@ -45,17 +66,17 @@ LONG ExitHandler(LPEXCEPTION_POINTERS p)
     );
     GetExitCodeThread(
         hThread,
-        &hLibModule
+        &dwThreadExitCode
     );
-    if (hLibModule)
+    if (dwThreadExitCode)
     {
-#ifdef DEBUG
-        wprintf(L"E. Error while unhooking DWM (%d).\n", hLibModule);
-#endif
+
+        wprintf(L"E. Error while unhooking DWM (%d).\n", dwThreadExitCode);
+
     }
-#ifdef DEBUG
+
     wprintf(L"E. Successfully unhooked DWM.\n");
-#endif
+
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -73,7 +94,7 @@ LRESULT CALLBACK WindowProc(
         PostQuitMessage(0);
         break;
     case WM_DWM_CRASHED:
-        PostMessage(hWnd, WM_QUIT, DWM_CRASHED, 0);
+        PostMessage(hWnd, WM_QUIT, ERROR_DWM_CRASHED, 0);
         break;
     }
     return DefWindowProc(hWnd, uMsg, wParam, lParam);
@@ -87,6 +108,47 @@ VOID CALLBACK WaitForDWMToCrash(
     SendMessage(reinterpret_cast<HWND>(lpParameter), WM_DWM_CRASHED, 0, 0);
 }
 
+DWORD FreeRemoteLibrary(FARPROC hAddrFreeLibrary)
+{
+    DWORD dwThreadExitCode = 0;
+    HANDLE hThread = CreateRemoteThread(
+        hProcess,
+        NULL,
+        0,
+        (LPTHREAD_START_ROUTINE)hAddrFreeLibrary,
+        hMod,
+        0,
+        NULL
+    );
+    if (hThread == NULL)
+    {
+
+        wprintf(L"ERROR: Unable to call FreeLibrary.\n");
+
+        TerminateProcess(hProcess, 0);
+        return ERROR_FAILED_TO_CALL_FREELIBRARY;
+    }
+    WaitForSingleObject(
+        hThread,
+        INFINITE
+    );
+    BOOL bResult = GetExitCodeThread(
+        hThread,
+        &dwThreadExitCode
+    );
+    if (!dwThreadExitCode || !bResult)
+    {
+
+        wprintf(L"ERROR: FreeLibrary failed.\n");
+
+        return ERROR_FREELIBRARY_FAILED;
+    }
+
+    wprintf(L"FreeLibrary OK.\n");
+
+    return ERROR_SUCCESS;
+}
+
 int WINAPI wWinMain(
     HINSTANCE hInstance, 
     HINSTANCE hPrevInstance, 
@@ -94,37 +156,83 @@ int WINAPI wWinMain(
     int nCmdShow
 )
 {
+    FILE* conout = NULL;
+    SIZE_T i = 0;
+    BOOL bRet = FALSE;
+    DWORD dwRet = 0;
+    BOOL bErr = FALSE;
     LPTOP_LEVEL_EXCEPTION_FILTER pExitHandler = NULL;
     HMODULE hKernel32 = NULL;
-    FARPROC hAdrLoadLibrary = NULL;
+    FARPROC hAdrLoadLibraryW = NULL;
+    FARPROC hAdrFreeLibrary = NULL;
     void* pLibRemote = NULL;
+    void* pShellCode = NULL;
     wchar_t szLibPath[_MAX_PATH];
     wchar_t szTmpLibPath[_MAX_PATH];
     BOOL bResult = FALSE;
-    HANDLE snapshot = NULL;
-    PROCESSENTRY32 entry;
-    DWORD processId = 0;
+    HANDLE hSnapshot = NULL;
+    PROCESSENTRY32 stProcessEntry = { 0 };
+    DWORD dwProcessId = 0;
     HMODULE* hMods = NULL;
-    DWORD hModuleArrayInitialBytesInitial = 100 * sizeof(HMODULE);
+    DWORD hModuleArrayInitialBytesInitial = 
+        MODULE_ARRAY_INITIAL_SIZE * sizeof(HMODULE);
     DWORD hModuleArrayInitialBytes = hModuleArrayInitialBytesInitial;
     DWORD hModuleArrayBytesNeeded = 0;
-    FILE* conout = NULL;
     HMODULE hInjectionDll = NULL;
     FARPROC hInjectionMainFunc = NULL;
-    SIZE_T i = 0;
-    BOOL bRet = FALSE;
-    WNDCLASS wc = { };
-    HWND hWnd;
-    MSG msg = { };
-    HANDLE waitObject = NULL;
-    HHOOK hook = NULL;
+    WNDCLASS wc = { 0 };
+    HWND hWnd = NULL;
+    MSG msg = { 0 };
+    HANDLE hWaitObject = NULL;
+    HANDLE hThread = NULL;
+    DWORD dwThreadExitCode = 0;
+    SIZE_T dwBytesRead = 0;
+    BYTE shellCode[] =
+    {
+        0x53, 0x48, 0x89, 0xE3, 0x48, 0x83, 0xEC, 0x20, 0x66, 0x83,
+        0xE4, 0xC0, 0x48, 0xB9, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0x48, 0xBA, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0xFF, 0xD2, 0x48, 0xBA, 0x41, 0x41, 0x41, 0x41,
+        0x41, 0x41, 0x41, 0x41, 0x48, 0x89, 0x02, 0x48, 0x89, 0xDC,
+        0x5B, 0xC3
+    };
+    // shell code injection technique on x64 courtesy of:
+    // https://clymb3r.wordpress.com/2013/05/26/implementing-remote-loadlibrary-and-remote-getprocaddress-using-powershell-and-assembly/
+    /* x64 assembly is:
+    [SECTION .text]
+    global _start
+    _start:
+        ; Save rsp and setup stack for function call
+        push rbx
+        mov rbx, rsp
+        sub rsp, 0x20
+        and sp, 0xffc0
+ 
+        ; Call LoadLibraryA
+        mov rcx, 0x4141414141414141    ; Ptr to string of library, set by injector
+        mov rdx, 0x4141414141414141    ; Address of LoadLibrary, set by injector
+        call rdx
+ 
+        mov rdx, 0x4141414141414141    ; Ptr to save result, set by injector
+        mov [rdx], rax
+ 
+        ; Fix stack
+        mov rsp, rbx
+        pop rbx
+        ret
+     */
 
     // Step 0: Print debug info
-#ifdef DEBUG
+
     if (!AllocConsole());
-    if (freopen_s(&conout, "CONOUT$", "w", stdout));
-    wprintf(L"Center Windows Titlebars\n========================\n");
-#endif
+    if (freopen_s(
+        &conout, 
+        "CONOUT$", 
+        "w",
+        stdout)
+    );
+    wprintf(TEXT("WinCenterTitle\n==============\n"));
+
 
     // Step 1: Format hook library path
     GetModuleFileName(
@@ -133,86 +241,139 @@ int WINAPI wWinMain(
         _MAX_PATH
     );
     PathRemoveFileSpec(szLibPath);
-    lstrcat(
+    wcscat_s(
         szLibPath,
-        L"\\WinCenterTitleLibrary.dll"
+        _MAX_PATH,
+        TEXT(LIBRARY_NAME)
     );
-#ifdef DEBUG
+
     wprintf(
         L"1. Hook Library Path: %s\n", 
         szLibPath
     );
-#endif
+
 
     // Step 2: Get DLL entry point address
     hInjectionDll = LoadLibrary(szLibPath);
+    if (hInjectionDll == NULL)
+    {
+
+        wprintf(L"2. ERROR: Cannot load injection library.\n");
+
+        return ERROR_LOAD_LIBRARY;
+    }
     hInjectionMainFunc = GetProcAddress(
         hInjectionDll,
         "main"
     );
-    hInjection = reinterpret_cast<DWORD>(hInjectionMainFunc) -
+    if (hInjectionMainFunc == NULL)
+    {
+
+        wprintf(L"2. ERROR: Injection library lacks entry point.\n");
+
+        return ERROR_NO_MAIN_IN_INJECTION_LIB;
+    }
+    hInjection = 
+        reinterpret_cast<DWORD>(hInjectionMainFunc) -
         reinterpret_cast<DWORD>(hInjectionDll);
     FreeLibrary(hInjectionDll);
-#ifdef DEBUG
+
     wprintf(
         L"2. Hook Library Entry Point: 0x%x\n", 
         hInjection
     );
-#endif
 
-    // Step 3: Get address of LoadLibrary
+
+    // Step 3: Get address of LoadLibraryW & FreeLibrary
     hKernel32 = GetModuleHandle(L"Kernel32");
-    assert(hKernel32 != NULL);
-    hAdrLoadLibrary = GetProcAddress(
+    if (hKernel32 == NULL)
+    {
+
+        wprintf(L"3. ERROR: Cannot find address of Kernel32.\n");
+
+        return ERROR_GETMODULEHANDLE_KERNEL32;
+    }
+    hAdrLoadLibraryW = GetProcAddress(
         hKernel32,
         "LoadLibraryW"
     );
-    assert(hAdrLoadLibrary != NULL);
-#ifdef DEBUG
+    if (hAdrLoadLibraryW == NULL)
+    {
+
+        wprintf(L"3. ERROR: Cannot find address of LoadLibraryW.\n");
+
+        return ERROR_GETPROCADDRESS_LOADLIBRARYW;
+    }
+
     wprintf(
         L"3. LoadLibraryW address: %d\n", 
-        hAdrLoadLibrary
+        hAdrLoadLibraryW
     );
-#endif
 
+    hAdrFreeLibrary = GetProcAddress(
+        hKernel32,
+        "FreeLibrary"
+    );
+    if (hAdrFreeLibrary == NULL)
+    {
+
+        wprintf(L"3. ERROR: Cannot find address of FreeLibrary.\n");
+
+        return ERROR_GETPROCADDRESS_FREELIBRARY;
+    }
+
+    wprintf(
+        L"3. FreeLibrary address: %d\n",
+        hAdrFreeLibrary
+    );
+
+
+
+    // Repeatedly inject DWM
     while (TRUE)
     {
         // Step 4: Find DWM.exe
-        entry.dwSize = sizeof(PROCESSENTRY32);
-        snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
-        if (Process32First(snapshot, &entry) == TRUE)
+        stProcessEntry.dwSize = sizeof(PROCESSENTRY32);
+        hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+        if (Process32First(hSnapshot, &stProcessEntry) == TRUE)
         {
-            while (Process32Next(snapshot, &entry) == TRUE)
+            while (Process32Next(hSnapshot, &stProcessEntry) == TRUE)
             {
-                if (!wcscmp(entry.szExeFile, L"dwm.exe"))
+                if (!wcscmp(stProcessEntry.szExeFile, TEXT(DWM_PROCESS_NAME)))
                 {
-                    processId = entry.th32ProcessID;
+                    dwProcessId = stProcessEntry.th32ProcessID;
                     hProcess = OpenProcess(
                         PROCESS_ALL_ACCESS,
                         FALSE,
-                        processId
+                        dwProcessId
                     );
-                    assert(hProcess != NULL);
-#ifdef DEBUG
+                    if (hProcess == NULL)
+                    {
+
+                        wprintf(L"4. ERROR: Cannot get handle to dwm.exe.\n");
+
+                        return ERROR_DWM_OPENPROCESS;
+                    }
+
                     wprintf(
                         L"4. Found Desktop Window manager, PID: %d\n",
-                        processId
+                        dwProcessId
                     );
-#endif
+
                     break;
                 }
             }
         }
-        CloseHandle(snapshot);
-        if (processId == 0)
+        CloseHandle(hSnapshot);
+        if (dwProcessId == 0)
         {
-#ifdef DEBUG
+
             wprintf(L"4. ERROR: Desktop Window Manager is not running.\n");
-#endif
-            return -4;
+
+            return ERROR_DWM_NOT_RUNNING;
         }
 
-        // Step 5: Marshall path to library in DWM's memory
+        // Step 5: Write path to library in DWM's memory
         pLibRemote = VirtualAllocEx(
             hProcess,
             NULL,
@@ -220,7 +381,13 @@ int WINAPI wWinMain(
             MEM_COMMIT,
             PAGE_READWRITE
         );
-        assert(pLibRemote != NULL);
+        if (pLibRemote == NULL)
+        {
+
+            wprintf(L"5. ERROR: Cannot alloc memory in DWM.\n");
+
+            return ERROR_DWM_VIRTUALALLOC;
+        }
         bResult = WriteProcessMemory(
             hProcess,
             pLibRemote,
@@ -228,44 +395,216 @@ int WINAPI wWinMain(
             sizeof(szLibPath),
             NULL
         );
-        assert(bResult == TRUE);
-#ifdef DEBUG
-        wprintf(L"5. Marshalled library path in DWM's memory.\n");
-#endif
+        if (!bResult)
+        {
 
+            wprintf(L"5. ERROR: Cannot write memory in DWM.\n");
+
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pLibRemote,
+                0,
+                MEM_RELEASE
+            );
+            return ERROR_DWM_WRITEPROCESSMEMORY;
+        }
+
+        wprintf(L"5. Wrote library path in DWM's memory.\n");
+
+#ifdef _WIN64
+        // Step 6: Write shell code to DWM's memory
+        pShellCode = VirtualAllocEx(
+            hProcess,
+            NULL,
+            sizeof(szLibPath),
+            MEM_COMMIT,
+            PAGE_EXECUTE_READWRITE
+        );
+        if (pShellCode == NULL)
+        {
+
+            wprintf(L"6. ERROR: Cannot alloc memory in DWM.\n");
+
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pLibRemote,
+                0,
+                MEM_RELEASE
+            );
+            return ERROR_DWM_VIRTUALALLOC;
+        }
+        // Address of string containing path of module to load
+        *((uintptr_t*)(shellCode + 14)) = (uintptr_t)pLibRemote;
+        // Address of function to call (LoadLibraryW)
+        *((uintptr_t*)(shellCode + 24)) = (uintptr_t)hAdrLoadLibraryW;
+        // Address to write return value to
+        // Writing on top of the path in order to spare some calls,
+        // since the path is not required after calling LoadLibraryW
+        *((uintptr_t*)(shellCode + 36)) = (uintptr_t)pLibRemote;
+        bResult = WriteProcessMemory(
+            hProcess,
+            pShellCode,
+            (void*)shellCode,
+            sizeof(shellCode),
+            NULL
+        );
+        if (!bResult)
+        {
+
+            wprintf(L"6. ERROR: Cannot write memory in DWM.\n");
+
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pLibRemote,
+                0,
+                MEM_RELEASE
+            );
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pShellCode,
+                0,
+                MEM_RELEASE
+            );
+            return ERROR_DWM_WRITEPROCESSMEMORY;
+        }
+
+        wprintf(L"6. Wrote shell code in DWM's memory.\n");
+
+
+        // Step 7: Call shell code
+        hThread = CreateRemoteThread(
+            hProcess,
+            NULL,
+            0,
+            (LPTHREAD_START_ROUTINE)pShellCode,
+            NULL,
+            0,
+            NULL
+        );
+        if (hThread == NULL)
+        {
+
+            wprintf(L"7. ERROR: Failed to inject library into DWM.\n");
+
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pLibRemote,
+                0,
+                MEM_RELEASE
+            );
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pShellCode,
+                0,
+                MEM_RELEASE
+            );
+            return ERROR_FAILED_TO_INJECT;
+        }
+        WaitForSingleObject(
+            hThread,
+            INFINITE
+        );
+        bResult = GetExitCodeThread(
+            hThread,
+            &dwThreadExitCode
+        );
+        if (!dwThreadExitCode || !bResult)
+        {
+
+            wprintf(L"7. ERROR: Failed to run lib entry point in DWM.\n");
+
+            bErr = TRUE;
+        }
+
+        wprintf(L"7. Successfully injected library into DWM.\n");
+
+
+        // Step 8: Check result and cleanup
+        bResult = ReadProcessMemory(
+            hProcess,
+            pLibRemote,
+            &hMod,
+            sizeof(HMODULE),
+            &dwBytesRead
+        );
+        if (!bResult || dwBytesRead != sizeof(HMODULE))
+        {
+
+            wprintf(L"8. ERROR: Cannot get address of loaded module.\n");
+
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pLibRemote,
+                0,
+                MEM_RELEASE
+            );
+            VirtualFreeEx(
+                hProcess,
+                (LPVOID)pShellCode,
+                0,
+                MEM_RELEASE
+            );
+            TerminateProcess(hProcess, 0);
+            return ERROR_CANNOT_GET_ADDRESS_MODULE;
+        }
+        VirtualFreeEx(
+            hProcess,
+            (LPVOID)pLibRemote,
+            0,
+            MEM_RELEASE
+        );
+        VirtualFreeEx(
+            hProcess,
+            (LPVOID)pShellCode,
+            0,
+            MEM_RELEASE
+        );
+        if (bErr)
+        {
+            if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+            {
+                TerminateProcess(hProcess, 0);
+                return dwRet;
+            }
+            return ERROR_FAILED_TO_RUN_ENTRY_POINT;
+        }
+#else
         // Step 6: Load library in DWM
         hThread = CreateRemoteThread(
             hProcess,
             NULL,
             0,
-            (LPTHREAD_START_ROUTINE)hAdrLoadLibrary,
+            (LPTHREAD_START_ROUTINE)hAdrLoadLibraryW,
             pLibRemote,
             0,
             NULL
         );
-        assert(hThread != NULL);
+        if (hThread == NULL)
+        {
+
+            wprintf(L"6. ERROR: Failed to inject library into DWM.\n");
+
+            return ERROR_FAILED_TO_INJECT;
+        }
         WaitForSingleObject(
             hThread,
             INFINITE
         );
-        GetExitCodeThread(
+        bResult = GetExitCodeThread(
             hThread,
-            &hLibModule
+            &dwThreadExitCode
         );
-        assert(hLibModule != NULL);
-        if (!hLibModule)
+        if (!dwThreadExitCode || !bResult)
         {
-#ifdef DEBUG
-            wprintf(L"6. ERROR: Failed to inject library into DWM.\n");
-#endif
-            return -6;
+
+            wprintf(L"6. ERROR: Failed to run library entry point in DWM.\n");
+
+            return ERROR_FAILED_TO_RUN_ENTRY_POINT;
         }
-#ifdef DEBUG
-        wprintf(
-            L"6. Successfully injected library into DWM (%d).\n",
-            hLibModule
-        );
-#endif
+        hMod = (HMODULE)dwThreadExitCode;
+
+        wprintf(L"6. Successfully injected library into DWM.\n");
+
         // Step 7: Free path from DWM's memory
         VirtualFreeEx(
             hProcess,
@@ -273,16 +612,29 @@ int WINAPI wWinMain(
             0,
             MEM_RELEASE
         );
-#ifdef DEBUG
+
         wprintf(L"7. Freed path from DWM's memory.\n");
-#endif
+
 
         // Step 8: Get address of library in DWM's memory
+        // This is actually optional, but application is not tested without
         hModuleArrayInitialBytes = hModuleArrayInitialBytesInitial;
         hMods = (HMODULE*)calloc(
-            hModuleArrayInitialBytes, 1
+            hModuleArrayInitialBytes,
+            1
         );
-        assert(hMods != NULL);
+        if (hMods == NULL)
+        {
+
+            wprintf(L"8. ERROR: Cannot allocate module array.\n");
+
+            if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+            {
+                TerminateProcess(hProcess, 0);
+                return dwRet;
+            }
+            return ERROR_MODULE_ARRAY_ALLOC;
+        }
         bResult = EnumProcessModulesEx(
             hProcess,
             hMods,
@@ -290,14 +642,36 @@ int WINAPI wWinMain(
             &hModuleArrayBytesNeeded,
             LIST_MODULES_ALL
         );
-        assert(bResult == TRUE);
+        if (!bResult)
+        {
+
+            wprintf(L"8. ERROR: Unable to enum modules in DWM.\n");
+
+            if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+            {
+                TerminateProcess(hProcess, 0);
+                return dwRet;
+            }
+            return ERROR_DWM_MODULE_ENUM;
+        }
         if (hModuleArrayInitialBytes < hModuleArrayBytesNeeded)
         {
             hMods = (HMODULE*)realloc(
                 hMods,
                 hModuleArrayBytesNeeded
             );
-            assert(hMods != NULL);
+            if (hMods == NULL)
+            {
+
+                wprintf(L"8. ERROR: Cannot reallocate module array.\n");
+
+                if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+                {
+                    TerminateProcess(hProcess, 0);
+                    return dwRet;
+                }
+                return ERROR_MODULE_ARRAY_REALLOC;
+            }
             hModuleArrayInitialBytes = hModuleArrayBytesNeeded;
             bResult = EnumProcessModulesEx(
                 hProcess,
@@ -306,7 +680,18 @@ int WINAPI wWinMain(
                 &hModuleArrayBytesNeeded,
                 LIST_MODULES_ALL
             );
-            assert(bResult == TRUE);
+            if (!bResult)
+            {
+
+                wprintf(L"8. ERROR: Unable to enum modules in DWM.\n");
+
+                if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+                {
+                    TerminateProcess(hProcess, 0);
+                    return dwRet;
+                }
+                return ERROR_DWM_MODULE_ENUM;
+            }
         }
         CharLower(szLibPath);
         if (hModuleArrayBytesNeeded / sizeof(HMODULE) == 0)
@@ -315,63 +700,89 @@ int WINAPI wWinMain(
         }
         else
         {
-            for (i = 0; i < hModuleArrayBytesNeeded / sizeof(HMODULE); ++i)
+            for (i = 0; i <= hModuleArrayBytesNeeded / sizeof(HMODULE); ++i)
             {
+                if (i == hModuleArrayBytesNeeded / sizeof(HMODULE))
+                {
+                    i = -1;
+                    break;
+                }
                 bResult = GetModuleFileNameEx(
                     hProcess,
                     hMods[i],
                     szTmpLibPath,
                     _MAX_PATH
                 );
-                CharLower(szTmpLibPath);
-                if (!wcscmp(szTmpLibPath, szLibPath))
+                if (bResult)
                 {
-                    break;
+                    CharLower(szTmpLibPath);
+                    if (!wcscmp(szTmpLibPath, szLibPath))
+                    {
+                        break;
+                    }
                 }
             }
         }
         if (i == -1)
         {
-#ifdef DEBUG
+
             wprintf(L"8. ERROR: Cannot find library in DWM's memory.\n");
-#endif
-            return -8;
+
+            if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+            {
+                TerminateProcess(hProcess, 0);
+                return dwRet;
+            }
+            return ERROR_CANNOT_FIND_LIBRARY_IN_DWM;
         }
-#ifdef DEBUG
+
         wprintf(
             L"8. Found library in DWM's memory (%d/%d).\n",
             i,
             hModuleArrayBytesNeeded / sizeof(HMODULE)
         );
-#endif
-        // Step 9: Run DLL's entry point
+
         hMod = hMods[i];
+#endif
+
+        // Step 9: Run DLL's entry point
         hThread = CreateRemoteThread(
             hProcess,
             NULL,
             0,
             reinterpret_cast<LPTHREAD_START_ROUTINE>
-                ((uint64_t)hMod + (uint64_t)hInjection),
+                ((uintptr_t)hMod + (uintptr_t)hInjection),
             NULL,
             0,
             NULL
         );
+        if (hThread == NULL)
+        {
+
+            wprintf(L"9. ERROR: Cannot execute injection entry point.\n");
+
+            if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+            {
+                TerminateProcess(hProcess, 0);
+                return dwRet;
+            }
+            return ERROR_CANNOT_RUN_INJECTION_MAIN;
+        }
         WaitForSingleObject(
             hThread,
             INFINITE
         );
-        GetExitCodeThread(
+        bResult = GetExitCodeThread(
             hThread,
-            &hLibModule
+            &dwThreadExitCode
         );
-        assert(hLibModule != NULL);
-        if (hLibModule)
+        if (dwThreadExitCode || !bResult)
         {
-#ifdef DEBUG
-            wprintf(L"9. Error while hooking DWM (%d).\n", hLibModule);
-#endif
-            TCHAR wszLibPath[_MAX_PATH + 5];
-            ZeroMemory(wszLibPath, (_MAX_PATH + 5) * sizeof(TCHAR));
+            TCHAR wszLibPath[_MAX_PATH];
+            ZeroMemory(
+                wszLibPath, 
+                _MAX_PATH * sizeof(TCHAR)
+            );
             GetModuleFileName(
                 GetModuleHandle(NULL),
                 wszLibPath,
@@ -383,19 +794,56 @@ int WINAPI wWinMain(
                 _MAX_PATH,
                 TEXT("\\symbols\\settings.ini")
             );
-            DeleteFile(wszLibPath);
-            if (firstCrash)
+            bResult = DeleteFile(wszLibPath);
+            if (firstCrash && bResult)
             {
                 firstCrash = FALSE;
+
+                wprintf(
+                    L"9. First time error while running entry point in DWM "
+                    L"(%d). Maybe symbols have changed, will try to download "
+                    L"latest symbols, and rehook.\n", 
+                    dwThreadExitCode
+                );
+
             }
             else
             {
-                return -9;
+                if (bResult)
+                {
+
+                    wprintf(
+                        L"9. Cannot delete settings file.\n",
+                        dwThreadExitCode
+                    );
+
+                    if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+                    {
+                        TerminateProcess(hProcess, 0);
+                        return dwRet;
+                    }
+                    return ERROR_DELETE_SETTINGS;
+                }
+                else
+                {
+
+                    wprintf(
+                        L"9. Injection entry point failed in DWM (%d).\n",
+                        dwThreadExitCode
+                    );
+
+                    if (dwRet = FreeRemoteLibrary(hAdrFreeLibrary))
+                    {
+                        TerminateProcess(hProcess, 0);
+                        return dwRet;
+                    }
+                    return ERROR_RUNNING_HOOK_ENTRY_POINT;
+                }
             }
         }
-#ifdef DEBUG
+
         wprintf(L"9. Successfully hooked DWM.\n");
-#endif
+
         free(hMods);
 
         // Step 10: Register and create window
@@ -408,51 +856,51 @@ int WINAPI wWinMain(
         RegisterClass(&wc);
         hWnd = CreateWindowEx(
             0,                      // Optional window styles
-            CLASS_NAME,          // Window class
-            TEXT(""),                    // Window text
+            CLASS_NAME,             // Window class
+            TEXT(""),               // Window text
             WS_OVERLAPPEDWINDOW,    // Window style
             // Size and position
-            100,
-            100,
-            300,
-            300,
-            NULL,       // Parent window    
-            NULL,       // Menu
-            hInstance,  // Instance handle
-            NULL      // Additional application data
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            NULL,                   // Parent window    
+            NULL,                   // Menu
+            hInstance,              // Instance handle
+            NULL                    // Additional application data
         );
         if (!hWnd)
         {
-#ifdef DEBUG
+
             wprintf(L"10. Failed to create message window (%d).\n", GetLastError());
+
             ExitHandler(NULL);
-            return -10;
-#endif
+            return ERROR_CREATE_MESSAGE_WINDOW;
         }
-#ifdef DEBUG
+
         wprintf(L"10. Successfully created message window (%d).\n", hWnd);
-#endif
+
 
         // Step 11: Listen for DWM crashes
         RegisterWaitForSingleObject(
-            &waitObject,
+            &hWaitObject,
             hProcess,
             reinterpret_cast<WAITORTIMERCALLBACK>(WaitForDWMToCrash),
             reinterpret_cast<PVOID>(hWnd),
             INFINITE,
             WT_EXECUTEONLYONCE
         );
-        if (!waitObject)
+        if (!hWaitObject)
         {
-#ifdef DEBUG
+
             wprintf(L"11. Unable to register for watching DWM.\n");
+
             ExitHandler(NULL);
-            return -11;
-#endif
+            return ERROR_REGISTER_DWM_WATCH;
         }
-#ifdef DEBUG
+
         wprintf(L"11. Registered for watching DWM.\n");
-#endif
+
 
         // Step 12: Register exception handler
         if (!pExitHandler)
@@ -460,22 +908,32 @@ int WINAPI wWinMain(
             pExitHandler = SetUnhandledExceptionFilter(
                 reinterpret_cast<LPTOP_LEVEL_EXCEPTION_FILTER>(ExitHandler)
             );
-#ifdef DEBUG
+            if (!pExitHandler)
+            {
+
+                wprintf(L"12. Failed to register exit handler.\n");
+
+                ExitHandler(NULL);
+                return ERROR_REGISTER_EXIT_HANDLER;
+            }
+
             wprintf(
                 L"12. Registered exception handler (%d).\n",
                 pExitHandler
             );
-#endif
+
         }
-#ifdef DEBUG
+
+        // Step 13: Listen for messages
+
         wprintf(L"Listening for messages...\n");
-#endif
+
         while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0)
         {
             if (bRet == -1)
             {
                 ExitHandler(NULL);
-                return 0;
+                return ERROR_MESSAGE_QUEUE;
             }
             else
             {
@@ -483,23 +941,26 @@ int WINAPI wWinMain(
                 DispatchMessage(&msg);
             }
         }
-        if (msg.wParam != DWM_CRASHED)
+        if (msg.wParam != ERROR_DWM_CRASHED)
         {
-#ifdef DEBUG
+
             wprintf(L"Shutting down application...\n");
-#endif
+
             ExitHandler(NULL);
-            return 0;
+            return ERROR_SUCCESS;
         }
         // not required; in fact, it will post a WM_QUIT 
         // for the next window we spawn; really stupid idea
         //DestroyWindow(hWnd);
         UnregisterClass(CLASS_NAME, hInstance);
 
-#ifdef DEBUG
+
         wprintf(L"DWM was restarted, rehooking...\n");
-#endif
+
+
+        // wait a bit for DWM to respawn
+        Sleep(DWM_RESTART_WAIT_DELAY);
     }
 
-	return 0;
+	return ERROR_SUCCESS;
 }
