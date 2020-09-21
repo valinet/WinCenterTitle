@@ -1,8 +1,9 @@
-#include <iostream>
+#include <valinet/ini/ini.h>
+#include <valinet/pdb/pdb.h>
+#include <stdio.h>
 #include <Windows.h>
 #include <funchook.h>
-#include "ini.h"
-#include "pdb.h"
+#pragma comment(lib, "Psapi.lib") //required by funchook
 
 #define MARGIN_OVERHANG_WIDTH_FIX           2
 #define AERO_COLOR_OFFSET                   0x19
@@ -12,6 +13,10 @@
 #define SETTINGS_RELATIVE_PATH              "\\symbols\\settings.ini"
 #define SETTINGS_ADDRESSES_SECTION_NAME     "Addresses"
 #define MODULE_NAME_UDWM                    "uDWM"
+#define DLL_NAME                            "uDWM.dll"
+#define SYMBOL_NAME_MAX_LEN                 200
+#define ADDR_G_PDMINSTANCE                  "g_pdmInstance"
+#define ADDR_CDESKTOPMANAGER_LOADTHEME      "CDesktopManager::LoadTheme"
 
 #define SET_COLOR
 #undef SET_COLOR
@@ -119,6 +124,10 @@ __declspec(dllexport) DWORD WINAPI main(
         if (titlebar_color == NULL)
         {
             SIZE_T dwRet;
+            char* symbolNames[NUMBER_OF_REQUESTED_SYMBOLS] = {
+                ADDR_G_PDMINSTANCE, 
+                ADDR_CDESKTOPMANAGER_LOADTHEME 
+            };
             DWORD addresses[NUMBER_OF_REQUESTED_SYMBOLS];
             ZeroMemory(
                 addresses, 
@@ -142,6 +151,7 @@ __declspec(dllexport) DWORD WINAPI main(
             PathRemoveFileSpecA(szSettingsPath);
             strcat_s(
                 szSettingsPath,
+                _MAX_PATH,
                 SETTINGS_RELATIVE_PATH
             );
             mbstowcs_s(
@@ -151,21 +161,23 @@ __declspec(dllexport) DWORD WINAPI main(
                 szSettingsPath,
                 _MAX_PATH
             );
-            CIni ini = CIni(wszSettingsPath);
-            addresses[0] = ini.GetUInt(
+            addresses[0] = VnGetUInt(
                 TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
                 TEXT(ADDR_G_PDMINSTANCE),
-                0
+                0,
+                wszSettingsPath
             );
-            addresses[1] = ini.GetUInt(
+            addresses[1] = VnGetUInt(
                 TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
                 TEXT(ADDR_CDESKTOPMANAGER_LOADTHEME),
-                0
+                0,
+                wszSettingsPath
             );
             if (addresses[0] == 0 || addresses[1] == 0)
             {
-                if (download_symbols(
+                if (VnDownloadSymbols(
                     hModule,
+                    DLL_NAME,
                     szSettingsPath,
                     _MAX_PATH
                 ))
@@ -176,9 +188,11 @@ __declspec(dllexport) DWORD WINAPI main(
                     );
                     return DOWNLOAD_SYMBOLS_ERROR;
                 }
-                if (get_symbols(
+                if (VnGetSymbols(
                     szSettingsPath,
-                    addresses
+                    addresses,
+                    symbolNames,
+                    NUMBER_OF_REQUESTED_SYMBOLS
                 ))
                 {
                     FreeLibraryAndExitThread(
@@ -187,15 +201,17 @@ __declspec(dllexport) DWORD WINAPI main(
                     );
                     return GET_SYMBOLS_ERROR;
                 }
-                ini.WriteUInt(
+                VnWriteUInt(
                     TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
                     TEXT(ADDR_G_PDMINSTANCE),
-                    addresses[0]
+                    addresses[0],
+                    wszSettingsPath
                 );
-                ini.WriteUInt(
+                VnWriteUInt(
                     TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
                     TEXT(ADDR_CDESKTOPMANAGER_LOADTHEME),
-                    addresses[1]
+                    addresses[1],
+                    wszSettingsPath
                 );
             }
 
