@@ -100,6 +100,7 @@ int main(int argc, char** argv)
     );
     return VnInjectAndMonitorProcess(
         szLibPath,
+        "main",
         sizeof(szLibPath),
         TEXT(DWM_PROCESS_NAME),
         TEXT(CLASS_NAME),
