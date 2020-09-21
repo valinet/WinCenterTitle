@@ -59,13 +59,7 @@ Steps:
 
    If "git" is not found as a command, type its full path, or have its folder added to PATH, or open Git command window in the respective folder if using Git for Windows.
 
-2. Initialize submodules
-
-   ```
-   git submodule update --init --recursive
-   ```
-
-3. Compile funchook
+2. Compile funchook
 
    ```
    cd libs
@@ -76,11 +70,11 @@ Steps:
    cmake --build . --config Release
    ```
 
-   Type "Win32" instead of "x64" above, if compiling for x86. The command above works for x64.
-
    If "cmake" is not found as a command, type its full path, or have its folder added to PATH.
 
-4. Compile WinCenterTitle
+   Type "Win32" instead of "x64" above, if compiling for x86. The command above works for x64.
+
+3. Compile WinCenterTitle
 
    * Double click the WinCenterTitle.sln to open the solution in Visual Studio. Choose Release and your processor architecture in the toolbar. Press F6 to compile.
 
@@ -95,7 +89,15 @@ Steps:
      * For x64:
 
        ```
-       MSBuild WinCenterTitle.sln /property:Configuration=Release /property:Platform=x64
+       msbuild WinCenterTitle.sln /property:Configuration=Release /property:Platform=x64
        ```
 
    The resulting exe and dll will be in "Release" folder (if you chose x86), or "x64\Release" (if you chose x64) in the folder containing the solution file.
+
+That's it. later, if you want to recompile, make sure to update the repository and the submodules first:
+
+```
+git pull
+git submodule update --init --recursive
+```
+
