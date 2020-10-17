@@ -19,16 +19,16 @@
 #define SYMBOL_NAME_MAX_LEN                 200
 #define ADDR_G_PDMINSTANCE                  "g_pdmInstance"
 #define ADDR_CDESKTOPMANAGER_LOADTHEME      "CDesktopManager::LoadTheme"
-#define ADDR_FUNC2                          "CMatrixTransformProxy::Update"
-#define ADDR_FUNC3                          "CText::ValidateResources"
-#define ADDR_FUNC4                          "CText::UpdateAlignmentTransform"
+#define ADDR_CMATRIXTRANSFORMPROXY_UPDATE   "CMatrixTransformProxy::Update"
+#define ADDR_CTEXT_VALIDATERESOURCES        "CText::ValidateResources"
+#define ADDR_CTEXT_UPDATEALIGNMENTTRANFORM  "CText::UpdateAlignmentTransform"
 #define SETTINGS_OS_SECTION_NAME            "OS"
 #define OS_VERSION_STRING                   "Build"
 
-#define SET_COLOR
-#undef SET_COLOR
+//#define SET_COLOR
+//#undef SET_COLOR
+//#define TEXT_COLOR                          RGB(0, 0, 0)
 #define ENTIRE_TITLEBAR                     10000
-#define TEXT_COLOR                          RGB(0, 0, 0)
 #define TITLEBARS_WHITE_DEFAULT             1
 #define TITLEBARS_COLORED                   0
 #define TITLEBARS_DESIRED_COLOR             TITLEBARS_WHITE_DEFAULT
@@ -182,7 +182,7 @@ int64_t CMatrixTransformProxyUpdateHook(
             }
             else
             {
-                mat->dx = dx;
+                mat->dx = (int)dx;
             }
         }
     }
@@ -291,9 +291,9 @@ __declspec(dllexport) DWORD WINAPI main(
             char* symbolNames[NUMBER_OF_REQUESTED_SYMBOLS] = {
                 ADDR_G_PDMINSTANCE, 
                 ADDR_CDESKTOPMANAGER_LOADTHEME,
-                ADDR_FUNC2,
-                ADDR_FUNC3,
-                ADDR_FUNC4
+                ADDR_CMATRIXTRANSFORMPROXY_UPDATE,
+                ADDR_CTEXT_VALIDATERESOURCES,
+                ADDR_CTEXT_UPDATEALIGNMENTTRANFORM
             };
             DWORD addresses[NUMBER_OF_REQUESTED_SYMBOLS];
             ZeroMemory(
@@ -342,19 +342,19 @@ __declspec(dllexport) DWORD WINAPI main(
             );
             addresses[2] = VnGetUInt(
                 TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
-                TEXT(ADDR_FUNC2),
+                TEXT(ADDR_CMATRIXTRANSFORMPROXY_UPDATE),
                 0,
                 wszSettingsPath
             );
             addresses[3] = VnGetUInt(
                 TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
-                TEXT(ADDR_FUNC3),
+                TEXT(ADDR_CTEXT_VALIDATERESOURCES),
                 0,
                 wszSettingsPath
             );
             addresses[4] = VnGetUInt(
                 TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
-                TEXT(ADDR_FUNC4),
+                TEXT(ADDR_CTEXT_UPDATEALIGNMENTTRANFORM),
                 0,
                 wszSettingsPath
             );
@@ -427,7 +427,13 @@ __declspec(dllexport) DWORD WINAPI main(
                 wszSettingsPath
             );
 
-            if (addresses[0] == 0 || addresses[1] == 0 || addresses[2] == 0 || wcscmp(szReportedVersion, szStoredVersion))
+            if (addresses[0] == 0 || 
+                addresses[1] == 0 || 
+                addresses[2] == 0 || 
+                addresses[3] == 0 ||
+                addresses[4] == 0 || 
+                wcscmp(szReportedVersion, szStoredVersion)
+            )
             {
                 if (VnDownloadSymbols(
                     hModule,
@@ -469,19 +475,19 @@ __declspec(dllexport) DWORD WINAPI main(
                 );
                 VnWriteUInt(
                     TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
-                    TEXT(ADDR_FUNC2),
+                    TEXT(ADDR_CMATRIXTRANSFORMPROXY_UPDATE),
                     addresses[2],
                     wszSettingsPath
                 );
                 VnWriteUInt(
                     TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
-                    TEXT(ADDR_FUNC3),
+                    TEXT(ADDR_CTEXT_VALIDATERESOURCES),
                     addresses[3],
                     wszSettingsPath
                 );
                 VnWriteUInt(
                     TEXT(SETTINGS_ADDRESSES_SECTION_NAME),
-                    TEXT(ADDR_FUNC4),
+                    TEXT(ADDR_CTEXT_UPDATEALIGNMENTTRANFORM),
                     addresses[4],
                     wszSettingsPath
                 );
