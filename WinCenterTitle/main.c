@@ -100,13 +100,25 @@ int main(int argc, char** argv)
     );
     return VnInjectAndMonitorProcess(
         szLibPath,
-        "main",
         sizeof(szLibPath),
+        "main",
         TEXT(DWM_PROCESS_NAME),
         TEXT(CLASS_NAME),
         CrashHandler,
         GetModuleHandle(NULL),
         stream,
-        DWM_RESTART_WAIT_DELAY
+        DWM_RESTART_WAIT_DELAY,
+        NULL,
+        FALSE,
+        1000,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        0,
+        NULL,
+        NULL
     );
 }
