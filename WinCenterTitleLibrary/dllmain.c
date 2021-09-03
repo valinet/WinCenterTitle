@@ -104,7 +104,7 @@ int64_t CTextValidateResourcesHook(
     // label based on a check of whether the label size exceeded the window
     // size; so, by setting the label size to a very large value, DWM is
     // tricked into thinking the overflow is always happening
-    val = ((DWORD*)g_CTextInstance + 100);
+    val = ((DWORD*)g_CTextInstance + 102); // 100
     if (*val < ENTIRE_TITLEBAR)
     {
         *val += ENTIRE_TITLEBAR;
@@ -132,19 +132,25 @@ int64_t CMatrixTransformProxyUpdateHook(
 
     if (g_CTextInstance)
     {
-        // this is the width of the title bar label containing the text
-        double v1 = *((DWORD*)g_CTextInstance + 100);
+        // offsets changed in some update to uDWM from 2021
+        // probably a new member was added to the CText class that
+        // moved everything further down; a SHORT most probably
+        // 
+        // this is the width of the title bar label containing the text - get it from CText::ValidateResources, there is a rect
+        double v1 = *((DWORD*)g_CTextInstance + 102);  // 100
         // this is the size available for the label (the size between the
         // window icon, or the left window margin, and the caption buttons, or the
-        // right window margin)
-        double v3 = *((DWORD*)g_CTextInstance + 30);
-        // this is the height of the titlebar text (UNUSED)
-        double v4 = *((DWORD*)g_CTextInstance + 31);
-        // this is the width of the window icon
-        double v6 = *((DWORD*)g_CTextInstance + 32);
+        // right window margin) - get it from CText::SetSize
+        double v3 = *((DWORD*)g_CTextInstance + 32);  // 30
+        // this is the height of the titlebar text (UNUSED) - get it from CText::SetSize
+        double v4 = *((DWORD*)g_CTextInstance + 33);  // 31
+        // this is the width of the window icon - from CText::UpdateLayout and CVisual::UpdateLayout
+        // there is something where it substracts 2 values from another, it looks
+        // like it tries to compute the width available for the text
+        double v6 = *((DWORD*)g_CTextInstance + 34);  // 32
         // this is the width of the window caption buttons (for example,
-        // Close, Minimize, Maximize etc)
-        double v5 = *((DWORD*)g_CTextInstance + 33);
+        // Close, Minimize, Maximize etc) - from CText::UpdateLayout and CVisual::UpdateLayout 
+        double v5 = *((DWORD*)g_CTextInstance + 35);
         // this also contains the width and height:
         // tagSIZE st = *((tagSIZE*)g_CTextInstance + 15);
         // where tagSIZE is a struct of 2 LONGs (width, and height)
@@ -499,6 +505,18 @@ __declspec(dllexport) DWORD WINAPI main(
                 );
             }
 
+            /* 
+            The address of titlebar_color is determined like this:
+            1. Note that when the theme name is "aero.msstyles", DWM sets a
+            flag that makes the title bar white despite the theme's color
+            2. To locate that flag, look in "CDesktopManager::LoadTheme",
+            where it uses the string "aero.msstyles", it sets some variable
+            into some member of the class.
+            3. A pointer to that class is also stored globally in a
+            variable called "g_pdmInstance"; this can be verified by
+            looking in "CDesktopManager::Create"
+
+            */
             HANDLE hudwm = GetModuleHandle(TEXT(MODULE_NAME_UDWM));
             uintptr_t* g_pdmInstance = (uintptr_t*)(
                 (uintptr_t)hudwm + 
