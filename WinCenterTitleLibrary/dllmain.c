@@ -150,7 +150,7 @@ int64_t CMatrixTransformProxyUpdateHook(
         double v6 = *((DWORD*)g_CTextInstance + 34);  // 32
         // this is the width of the window caption buttons (for example,
         // Close, Minimize, Maximize etc) - from CText::UpdateLayout and CVisual::UpdateLayout 
-        double v5 = *((DWORD*)g_CTextInstance + 35);
+        double v5 = *((DWORD*)g_CTextInstance + 35);  // 33
         // this also contains the width and height:
         // tagSIZE st = *((tagSIZE*)g_CTextInstance + 15);
         // where tagSIZE is a struct of 2 LONGs (width, and height)
